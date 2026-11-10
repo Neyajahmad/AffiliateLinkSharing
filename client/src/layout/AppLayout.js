@@ -1,14 +1,15 @@
-import App from "../App";
+import { useLocation } from "react-router-dom";
 import Footer from "./Footer";
 import Header from "./Header";
 
-function AppLayout({ children }){
+function AppLayout({ children }) {
+    const { pathname } = useLocation();
     return (
-        <>
+        <div className="app-shell">
             <Header />
-            { children }
+            <main className="app-main page-enter" key={pathname}>{children}</main>
             <Footer />
-        </>
+        </div>
     );
 }
 

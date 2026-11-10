@@ -10,8 +10,10 @@ export const ROLE_PERMISSIONS = {
         canCreateLink: true,
         canDeleteLink: true,
         canEditLink: true,
+        canManageTeam: true,
+        canManagePayments: true,
     },
-    developer:{
+    developer: {
         canViewUser: false,
         canCreateUser: false,
         canDeleteUser: false,
@@ -20,6 +22,8 @@ export const ROLE_PERMISSIONS = {
         canCreateLink: false,
         canDeleteLink: false,
         canEditLink: false,
+        canManageTeam: false,
+        canManagePayments: false,
     },
     viewer: {
         canViewUser: true,
@@ -30,9 +34,16 @@ export const ROLE_PERMISSIONS = {
         canCreateLink: false,
         canDeleteLink: false,
         canEditLink: false,
+        canManageTeam: false,
+        canManagePayments: false,
     },
 };
 
+export const ROLE_LABELS = {
+    admin: 'Admin',
+    developer: 'Developer',
+    viewer: 'Viewer',
+};
 
 // Custom hook to return the applicable permissions of the logged in user.
 export const usePermission = () => {

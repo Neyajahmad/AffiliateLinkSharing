@@ -2,7 +2,7 @@ const Razorpay = require('razorpay');
 const { CREDIT_PACKS, PLAN_IDS } = require("../constants/paymentConstants");
 const crypto = require('crypto');
 const Users = require('../model/Users');
-const { request } = require('http');
+const { buildUserPayload } = require('../util/authUtil');
 
 const razorpay = new Razorpay({
     key_id: process.env.RAZORPAY_KEY_ID,
@@ -62,7 +62,7 @@ const paymentController = {
             user.credits += Number(credits);
             await user.save();
 
-            response.json({ user: user });
+            response.json({ user: buildUserPayload(user) });
         } catch (error) {
             console.log(error);
             response.status(500).json({
@@ -112,7 +112,7 @@ const paymentController = {
                 status: subscription.status
             };
             await user.save();
-            response.json({ user: user });
+            response.json({ user: buildUserPayload(user) });
         } catch (error) {
             console.log(error);
             response.status(500).json({

@@ -1,45 +1,40 @@
-import { Link } from "react-router-dom";
+import { Link, NavLink } from "react-router-dom";
+import { Container, Nav, Navbar } from "react-bootstrap";
+import { BrandLogo, useScrolled } from "../components/ui";
 
 function Header() {
+    const scrolled = useScrolled();
+
     return (
-        <nav className="navbar navbar-expand-lg bg-body-tertiary border-bottom border-body">
-            <div className="container">
-                <Link className="navbar-brand" to="/">
-                    Affiliate++
-                </Link>
-                <button
-                    className="navbar-toggler"
-                    type="button"
-                    data-bs-toggle="collapse"
-                    data-bs-target="#navbarSupportedContent"
-                    aria-controls="navbarSupportedContent"
-                    aria-expanded="false"
-                    aria-label="Toggle navigation"
-                >
-                    <span className="navbar-toggler-icon" />
-                </button>
-                <div className="collapse navbar-collapse" id="navbarSupportedContent">
-                    <ul className="navbar-nav ms-auto mb-2 mb-lg-0">
-                        <li className="nav-item">
-                            <Link className="nav-link active" aria-current="page" to="/">
-                                Home
-                            </Link>
-                        </li>
-                        <li className="nav-item">
-                            <Link className="nav-link" to="/login">
-                                Login
-                            </Link>
-                        </li>
-                        <li className="nav-item">
-                            <Link className="nav-link" to="/register">
-                                Register
-                            </Link>
-                        </li>
-                    </ul>
-                </div>
-            </div>
-        </nav>
-    ) ;
+        <Navbar
+            expand="lg"
+            sticky="top"
+            collapseOnSelect
+            variant="dark"
+            className={`site-navbar ${scrolled ? 'is-scrolled' : ''}`}
+        >
+            <Container>
+                <Navbar.Brand as={Link} to="/" aria-label="Affiliate++ home">
+                    <BrandLogo light />
+                </Navbar.Brand>
+                <Navbar.Toggle aria-controls="site-nav" />
+                <Navbar.Collapse id="site-nav">
+                    <Nav className="ms-auto align-items-lg-center gap-lg-1">
+                        <Nav.Link as={Link} to="/#features" eventKey="features">Features</Nav.Link>
+                        <Nav.Link as={Link} to="/#how-it-works" eventKey="how">How it works</Nav.Link>
+                        <Nav.Link as={Link} to="/#pricing" eventKey="pricing">Pricing</Nav.Link>
+                        <Nav.Link as={Link} to="/#faq" eventKey="faq">FAQ</Nav.Link>
+                        <Nav.Link as={NavLink} to="/login" eventKey="login">Log in</Nav.Link>
+                        <Nav.Link as={Link} to="/register" eventKey="register" className="nav-cta ms-lg-2 mt-2 mt-lg-0">
+                            <span className="btn btn-primary btn-sm w-100">
+                                Get started <i className="bi bi-arrow-right" aria-hidden="true" />
+                            </span>
+                        </Nav.Link>
+                    </Nav>
+                </Navbar.Collapse>
+            </Container>
+        </Navbar>
+    );
 }
 
 export default Header;

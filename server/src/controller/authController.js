@@ -4,226 +4,187 @@ const Users = require('../model/Users');
 const { OAuth2Client } = require('google-auth-library');
 const { validationResult } = require('express-validator');
 const send = require('../service/emailService');
+const {
+    attemptToRefreshToken,
+    buildUserPayload,
+    setAuthCookies,
+    clearAuthCookies,
+    cookieOptions
+} = require('../util/authUtil');
 
-// https://www.uuidgenerator.net/ 
- const secret = process.env.JWT_SECRET;
-const refreshSecret = process.env.JWT_REFRESH_TOKEN_SECRET;
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const authController = {
     login: async (request, response) => {
         try {
             const errors = validationResult(request);
             if (!errors.isEmpty()) {
-                return response.status(401).json({ errors: errors.array() });
+                return response.status(401).json({
+                    message: 'Invalid email or password',
+                    errors: errors.array()
+                });
             }
 
-            // The body contains username and password because of the express.json()
-            // middleware configured in the server.js
             const { username, password } = request.body;
+            const data = await Users.findOne({ email: String(username).trim() });
 
-            // Call Database to fetch user by the email
-            const data = await Users.findOne({ email: username });
-            if (!data) {
-                return response.status(401).json({ message: 'Invalid credentials ' });
+            // Google-only accounts have no password set.
+            if (!data || !data.password) {
+                return response.status(401).json({ message: 'Invalid email or password' });
             }
 
             const isMatch = await bcrypt.compare(password, data.password);
             if (!isMatch) {
-                return response.status(401).json({ message: 'Invalid credentials ' });
+                return response.status(401).json({ message: 'Invalid email or password' });
             }
 
-            const user = {
-                id: data._id,
-                name: data.name,
-                email: data.email,
-                role: data.role ? data.role : 'admin',
-                adminId: data.adminId,
-                credits: data.credits,
-                subscription: data.subscription
-            };
-
-            const token = jwt.sign(user, secret, { expiresIn: '1h' });
-            response.cookie('jwtToken', token, {
-                httpOnly: true,
-                secure: true,
-                path: '/',
-                sameSite: 'None'
-            });
-
-            const refreshToken = jwt.sign(user, refreshSecret, { expiresIn: '7d' });
-            // store it in the detabase if you want! stroing in DB will
-            // make refresh tokens more secure
-            response.cookie('refreshToken', refreshToken, {
-                httpOnly: true,
-                secure: true,
-                path: '/',
-                sameSite: 'None'
-            });
+            const user = buildUserPayload(data);
+            setAuthCookies(response, user);
             response.json({ user: user, message: 'User authenticated' });
         } catch (error) {
             console.log(error);
-            response.status(500).json({ error: 'Internal server error' });
+            response.status(500).json({ message: 'Internal server error' });
         }
     },
 
     logout: (request, response) => {
-        response.clearCookie('refreshToken', {
-            httpOnly: true,
-            secure: true,
-            path: '/',
-            sameSite: 'None'
-        });
-        response.clearCookie('jwtToken', {
-            httpOnly: true,
-            secure: true,
-            path: '/',
-            sameSite: 'None'
-
-        });
-        response.json({ message: 'Logout successfull' });
+        clearAuthCookies(response);
+        response.json({ message: 'Logout successful' });
     },
 
     isUserLoggedIn: async (request, response) => {
-        const token = request.cookies.jwtToken;
+        const token = request.cookies?.jwtToken;
+        const refreshToken = request.cookies?.refreshToken;
 
-        if (!token) {
+        try {
+            let userId = null;
+            if (token) {
+                try {
+                    userId = jwt.verify(token, process.env.JWT_SECRET).id;
+                } catch (error) {
+                    // Expired or invalid access token: try the refresh token below.
+                }
+            }
+
+            if (!userId && refreshToken) {
+                const { newAccessToken, user } = await attemptToRefreshToken(refreshToken);
+                response.cookie('jwtToken', newAccessToken, cookieOptions);
+                return response.json({ message: 'User is logged in', user: user });
+            }
+
+            if (!userId) {
+                return response.status(401).json({ message: 'Unauthorized access' });
+            }
+
+            const data = await Users.findById(userId);
+            if (!data) {
+                clearAuthCookies(response);
+                return response.status(401).json({ message: 'Unauthorized access' });
+            }
+
+            return response.json({ message: 'User is logged in', user: buildUserPayload(data) });
+        } catch (error) {
+            console.log('isUserLoggedIn failed:', error.message);
             return response.status(401).json({ message: 'Unauthorized access' });
         }
-
-        jwt.verify(token, secret, async (error, user) => {
-            if (error) {
-                const refreshToken = request.cookies?.refreshToken;
-                if (refreshToken) {
-                    const { newAccessToken, user } =
-                        await attemptToRefreshToken(refreshToken);
-                    response.cookie('jwtToken', newAccessToken, {
-                        httpOnly: true,
-                        secure: true,
-                        path: '/',
-                        sameSite: 'None'
-                    });
-                    console.log('Refresh token renewed the access token');
-                    return response.json({ message: 'User is logged in', user: user });
-                }
-
-                return response.status(401).json({ message: 'Unauthorized access' });
-            } else {
-                const latestUserDetails = await Users.findById({ _id: user.id });
-                response.json({ message: 'User is logged in', user: latestUserDetails });
-            }
-        });
     },
 
     register: async (request, response) => {
         try {
-            // Extract attributes from the request body
             const { username, password, name } = request.body;
+            const email = String(username || '').trim();
 
-            // Firstly check if user already exist with the given email
-            const data = await Users.findOne({ email: username });
-            if (data) {
-                return response.status(401)
-                    .json({ message: 'Account already exist with given email' });
+            if (!name || !String(name).trim()) {
+                return response.status(400).json({ message: 'Name is required' });
+            }
+            if (!EMAIL_PATTERN.test(email)) {
+                return response.status(400).json({ message: 'Please enter a valid email address' });
+            }
+            if (!password || String(password).length < 6) {
+                return response.status(400).json({ message: 'Password must be at least 6 characters long' });
             }
 
-            // Encrypt the password before saving the record to the database
-            const encryptedPassword = await bcrypt.hash(password, 10);
+            const existing = await Users.findOne({ email: email });
+            if (existing) {
+                return response.status(401)
+                    .json({ message: 'An account already exists with this email' });
+            }
 
-            // Create mongoose model object and set the record values
-            const user = new Users({
-                email: username,
+            const encryptedPassword = await bcrypt.hash(password, 10);
+            const data = await Users.create({
+                email: email,
                 password: encryptedPassword,
-                name: name,
+                name: String(name).trim(),
                 role: 'admin'
             });
-            await user.save();
-            const userDetails = {
-                id: user._id,
-                name: user.name,
-                email: user.email,
-                role: user.role,
-                credits: user.credits
-            };
-            const token = jwt.sign(userDetails, secret, { expiresIn: '1h' });
 
-            response.cookie('jwtToken', token, {
-                httpOnly: true,
-                secure: true,
-                path: '/',
-                sameSite: 'None'
-            });
-            response.json({ message: 'User registered', user: userDetails });
-        } catch (error) {
-            console.log(error);
-            return response.status(500).json({ error: 'Internal Server Error' });
-        }
-    },
-
-    googleAuth: async (request, response) => {
-        try {
-            const { idToken } = request.body;
-            if (!idToken) {
-                return response.status(401).json({ message: 'Invalid request' });
-            }
-
-            const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-            const googleResponse = await googleClient.verifyIdToken({
-                idToken: idToken,
-                audience: process.env.GOOGLE_CLIENT_ID
-            });
-
-            const payload = googleResponse.getPayload();
-            const { sub: googleId, name, email } = payload;
-
-            let data = await Users.findOne({ email: email });
-            if (!data) {
-                data = new Users({
-                    email: email,
-                    name: name,
-                    isGoogleUser: true,
-                    googleId: googleId,
-                    role: 'admin'
-                });
-                await data.save();
-            }
-
-            const user = {
-                id: data._id ? data._id : googleId,
-                username: email,
-                name: name,
-                role: data.role ? data.role : 'admin', // This is the ensure backward compatibility
-                credits: data.credits
-            };
-
-            // making 1 minute only for testing, revert it back to 1h
-            const token = jwt.sign(user, secret, { expiresIn: '1h' });
-            response.cookie('jwtToken', token, {
-                httpOnly: true,
-                secure: true,
-                path: '/',
-                sameSite: 'None'
-            });
-
-            const refreshToken = jwt.sign(user, refreshSecret, { expiresIn: '7d' });
-            // store it in the detabase if you want! stroing in DB will
-            // make refresh tokens more secure
-            response.cookie('refreshToken', refreshToken, {
-                httpOnly: true,
-                secure: true,
-                path: '/',
-                sameSite: 'None'
-            });
-            response.json({ user: user, message: 'User authenticated' });
+            const user = buildUserPayload(data);
+            setAuthCookies(response, user);
+            response.json({ message: 'User registered', user: user });
         } catch (error) {
             console.log(error);
             return response.status(500).json({ message: 'Internal server error' });
         }
     },
 
-    refreshToken: async (request, response) => {
+    googleAuth: async (request, response) => {
+        const { idToken } = request.body || {};
+        if (!idToken) {
+            return response.status(401).json({ message: 'Invalid request' });
+        }
 
+        const clientId = process.env.GOOGLE_CLIENT_ID;
+        if (!clientId) {
+            console.log('Google sign-in failed: GOOGLE_CLIENT_ID is not set on the server');
+            return response.status(500).json({
+                message: 'Google sign-in is not configured on the server'
+            });
+        }
+
+        let payload;
+        try {
+            const googleClient = new OAuth2Client(clientId);
+            const ticket = await googleClient.verifyIdToken({
+                idToken: idToken,
+                audience: clientId
+            });
+            payload = ticket.getPayload();
+        } catch (error) {
+            // Most common cause: the server's GOOGLE_CLIENT_ID differs from the
+            // client ID the frontend used (REACT_APP_GOOGLE_CLIENT_ID).
+            console.log('Google token verification failed:', error.message);
+            return response.status(401).json({
+                message: 'Google sign-in failed: the Google token could not be verified'
+            });
+        }
+
+        try {
+            const { sub: googleId, name, email, email_verified: emailVerified } = payload;
+            if (!email || emailVerified === false) {
+                return response.status(401).json({
+                    message: 'Your Google account email is not verified'
+                });
+            }
+
+            let data = await Users.findOne({ email: email });
+            if (!data) {
+                data = await Users.create({
+                    email: email,
+                    name: name || email.split('@')[0],
+                    isGoogleUser: true,
+                    googleId: googleId,
+                    role: 'admin'
+                });
+            }
+
+            const user = buildUserPayload(data);
+            setAuthCookies(response, user);
+            response.json({ user: user, message: 'User authenticated' });
+        } catch (error) {
+            console.log(error);
+            return response.status(500).json({ message: 'Internal server error' });
+        }
     },
-
 
     sendResetPasswordToken: async (req, res) => {
         try {
@@ -238,7 +199,6 @@ const authController = {
                 user.resetPasswordCodeExpiry = expiry;
                 try {
                     await user.save();
-                    console.log('Reset code and expiry saved for user:', email, code, expiry);
                 } catch (saveErr) {
                     console.error('Error saving user with reset code:', saveErr);
                 }
@@ -263,43 +223,30 @@ const authController = {
     resetPassword: async (req, res) => {
         try {
             const { email, code, newPassword } = req.body;
-            console.log('RESET PASSWORD ATTEMPT:', { email, code, newPassword });
             if (!email || !code || !newPassword) {
-                console.log('Missing required fields');
                 return res.status(400).json({ message: 'Email, code, and newPassword are required' });
             }
-            let user = await Users.findOne({ email });
-            console.log('USER FOUND:', user);
+            if (String(newPassword).length < 6) {
+                return res.status(400).json({ message: 'Password must be at least 6 characters long' });
+            }
+            const user = await Users.findOne({ email }).lean();
             if (!user) {
-                console.log('User not found');
                 return res.status(404).json({ message: 'User not found' });
             }
-            // Ensure we have a plain object with all fields
-            if (typeof user.toObject === 'function') {
-                user = user.toObject();
-            }
-            console.log('User keys:', Object.keys(user));
-            console.log('User.resetPasswordCode:', user.resetPasswordCode);
-            console.log('User.resetPasswordCodeExpiry:', user.resetPasswordCodeExpiry);
             if (!user.resetPasswordCode || !user.resetPasswordCodeExpiry) {
-                console.log('No reset code found on user');
                 return res.status(400).json({ message: 'No reset code found. Please request a new one.' });
             }
             if (user.resetPasswordCode !== code) {
-                console.log('Reset code does not match');
                 return res.status(400).json({ message: 'Invalid reset code' });
             }
             if (user.resetPasswordCodeExpiry < new Date()) {
-                console.log('Reset code expired');
                 return res.status(400).json({ message: 'Reset code expired' });
             }
-            // Hash new password
             const hashed = await bcrypt.hash(newPassword, 10);
             await Users.updateOne({ email }, {
                 $set: { password: hashed },
                 $unset: { resetPasswordCode: '', resetPasswordCodeExpiry: '' }
             });
-            console.log('Password reset successful');
             return res.json({ message: 'Password reset successful' });
         } catch (err) {
             console.error('RESET PASSWORD ERROR:', err);

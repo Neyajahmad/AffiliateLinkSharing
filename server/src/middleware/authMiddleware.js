@@ -1,42 +1,36 @@
 const jwt = require('jsonwebtoken');
+const { attemptToRefreshToken, cookieOptions } = require('../util/authUtil');
 
 const authMiddleware = {
     protect: async (request, response, next) => {
-        try {
-            const token = request.cookies?.jwtToken;
-            if (!token) {
-                return response.status(401).json({
-                    error: 'Unauthorized access'
-                }) ;
-            }
+        const token = request.cookies?.jwtToken;
+        const refreshToken = request.cookies?.refreshToken;
 
+        if (!token && !refreshToken) {
+            return response.status(401).json({ error: 'Unauthorized access' });
+        }
+
+        if (token) {
             try {
-                const user = jwt.verify(token, process.env.JWT_SECRET);
-                request.user = user;
-                next();
+                request.user = jwt.verify(token, process.env.JWT_SECRET);
+                return next();
             } catch (error) {
-                const refreshToken = request.cookies?.refreshToken;
-                if (refreshToken) {
-                    const { newAccessToken, user } =
-                        await attemptToRefreshToken(refreshToken);
-                    response.cookie('jwtToken', newAccessToken, {
-                        httpOnly: true,
-                        secure: true,
-                        path: '/',
-                        sameSite: 'None'
-                    });
-                    request.user = user;
-                    next();
-                }
-                return response.status(401).json({
-                    error: 'Unauthorized access'
-                });
+                // Access token expired or invalid: fall through to refresh.
             }
+        }
+
+        if (!refreshToken) {
+            return response.status(401).json({ error: 'Unauthorized access' });
+        }
+
+        try {
+            const { newAccessToken, user } = await attemptToRefreshToken(refreshToken);
+            response.cookie('jwtToken', newAccessToken, cookieOptions);
+            request.user = user;
+            return next();
         } catch (error) {
-            console.log(error);
-            response.status(500).json({
-                error: 'Internal server error'
-            });
+            console.log('Refresh token rejected:', error.message);
+            return response.status(401).json({ error: 'Unauthorized access' });
         }
     },
 };

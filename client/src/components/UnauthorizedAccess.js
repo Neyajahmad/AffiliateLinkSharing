@@ -1,11 +1,15 @@
-function UnauthorizedAccess(){
+import { Link } from "react-router-dom";
+import { EmptyState } from "./ui";
+
+function UnauthorizedAccess() {
     return (
-        <div className="container text-center">
-            <h2>Unauthorized Access</h2>
-            <p>
-                You do not have enough permissions to perform this action.
-                Please contact your admin for more details.
-            </p>
+        <div className="status-page">
+            <EmptyState
+                icon="bi-shield-lock"
+                title="You don't have access to this page"
+                text="Your role doesn't include permission for this action. Ask your workspace admin if you need access."
+                action={<Link to="/dashboard" className="btn btn-primary">Back to links</Link>}
+            />
         </div>
     );
 }

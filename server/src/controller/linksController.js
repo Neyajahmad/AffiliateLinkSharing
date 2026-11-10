@@ -5,6 +5,9 @@ const { getDeviceInfo } = require("../util/linkUtil");
 const Clicks = require("../model/Clicks");
 const { generateUploadSignature } = require("../service/cloudinaryService");
 
+const SORTABLE_FIELDS = ['createdAt', 'campaignTitle', 'category', 'clickCount'];
+const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 const linksController = {
     create: async (request, response) => {
         
@@ -53,8 +56,11 @@ const linksController = {
             const {
                 currentPage = 0, pageSize = 10,
                 searchQuery = '',
-                sortfield = 'createdAt', sortOrder = 'desc'
+                sortOrder = 'desc'
             } = request.query;
+            const sortfield = SORTABLE_FIELDS.includes(request.query.sortField)
+                ? request.query.sortField
+                : 'createdAt';
 
             const userId = request.user.role === 'admin' ?
                 request.user.id : request.user.adminId;
@@ -68,10 +74,11 @@ const linksController = {
             };
 
             if (searchQuery) {
+                const pattern = new RegExp(escapeRegex(String(searchQuery)), 'i');
                 query.$or = [
-                    { campaignTitle: new RegExp(searchQuery, 'i') },
-                    { originalUrl: new RegExp(searchQuery, 'i') },
-                    { category: new RegExp(searchQuery, 'i') },
+                    { campaignTitle: pattern },
+                    { originalUrl: pattern },
+                    { category: pattern },
                 ];
             }
 
